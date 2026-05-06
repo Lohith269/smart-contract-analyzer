@@ -1,0 +1,97 @@
+import os
+import csv
+import subprocess
+
+DATASET_PATH = r"smartbugs_wild"
+
+MAX_SAFE = 1000
+MAX_VULN = 1000
+
+safe_count = 0
+vuln_count = 0
+
+
+# ===== EXTRACT FEATURES FROM SLITHER =====
+def extract_features(filepath):
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+            code = f.read().lower()
+
+        return [
+            code.count("call.value"),
+            code.count(".call("),
+            code.count("delegatecall"),
+            code.count("transfer("),
+            code.count("send("),
+            code.count("balance"),
+            code.count("msg.sender"),
+            code.count("require"),
+            code.count("assert"),
+            len(code)
+        ]
+
+    except:
+        return None
+
+
+# ===== LABEL =====
+def get_label(filepath):
+    result = subprocess.run(
+        ["slither", filepath],
+        capture_output=True,
+        text=True
+    )
+
+    output = (result.stdout + result.stderr).lower()
+
+    if "overflow" in output or "arithmetic" in output:
+        return 1
+    return 0
+
+
+header = [
+    "call_value","low_level_call","delegatecall",
+    "transfer","send","balance","msg_sender",
+    "require","assert","code_length",
+    "overflow"
+]
+
+
+with open("final_dataset_overflow.csv", "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(header)
+
+    for root, _, files in os.walk(DATASET_PATH):
+        for file in files:
+
+            if safe_count >= MAX_SAFE and vuln_count >= MAX_VULN:
+                break
+
+            if file.endswith(".sol"):
+                path = os.path.join(root, file)
+
+                print("Processing:", path)
+
+                label = get_label(path)
+
+                if label == 1 and vuln_count >= MAX_VULN:
+                    continue
+                if label == 0 and safe_count >= MAX_SAFE:
+                    continue
+
+                features = extract_features(path)
+                if not features:
+                    continue
+
+                writer.writerow(features + [label])
+
+                if label == 1:
+                    vuln_count += 1
+                else:
+                    safe_count += 1
+
+                print(f"✔ Added | Safe: {safe_count} | Vuln: {vuln_count}")
+
+print("\n✅ Dataset created")
+print("Safe:", safe_count)
+print("Vulnerable:", vuln_count)
